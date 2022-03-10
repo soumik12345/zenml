@@ -61,15 +61,6 @@ def is_standard_pin(pin: str) -> bool:
     return False
 
 
-def is_inside_repository(file_path: str) -> bool:
-    """Returns whether a file is inside a zenml repository."""
-    from zenml.repository import Repository
-
-    repo_path = Repository.find_repository().resolve()
-    absolute_file_path = pathlib.Path(file_path).resolve()
-    return repo_path in absolute_file_path.parents
-
-
 def is_third_party_module(file_path: str) -> bool:
     """Returns whether a file belongs to a third party package."""
     absolute_file_path = pathlib.Path(file_path).resolve()
@@ -130,28 +121,8 @@ def get_module_source_from_source(source: str) -> str:
     return ".".join(class_source.split(".")[:-2])
 
 
-def get_module_source_from_file_path(file_path: str) -> str:
-    """Gets module_source from a file_path. E.g. `/home/myrepo/step/trainer.py`
-    returns `myrepo.step.trainer` if `myrepo` is the root of the repo.
-
-    Args:
-        file_path: Absolute file path to a file within the module.
-    """
-    from zenml.repository import Repository
-
-    repo_path = str(Repository.find_repository().resolve())
-
-    # Replace repo_path with file_path to get relative path left over
-    relative_file_path = file_path.replace(repo_path, "")[1:]
-
-    # Kick out the .py and replace `/` with `.` to get the module source
-    relative_file_path = relative_file_path.replace(".py", "")
-    module_source = relative_file_path.replace("/", ".")
-    return module_source
-
-
 def get_relative_path_from_module_source(module_source: str) -> str:
-    """Get a directory path from module, relative to root of repository.
+    """Get a directory path from module, relative to root of the package tree.
 
     E.g. zenml.core.step will return zenml/core/step.
 
@@ -171,6 +142,38 @@ def get_absolute_path_from_module_source(module: str) -> str:
     """
     mod = importlib.import_module(module)
     return mod.__path__[0]
+
+
+def get_source_root_path() -> str:
+    """Gets the source root path of the current process.
+
+    E.g. if the process was started by running a `run.py` file under
+    `full/path/to/my/run.py`, the source root path is `full/path/to`.
+
+    Args:
+        module: a module.
+
+    Returns:
+        The source root path of the current process.
+
+    Raises:
+        RuntimeError: if the source root path could not be determined.
+    """
+    main_module = sys.modules.get("__main__")
+    if main_module is None:
+        raise RuntimeError(
+            "Could not determine the main module used to run the current "
+            "process."
+        )
+
+    if main_module.__file__ is None:
+        raise RuntimeError(
+            "Main module was not loaded from a file. Cannot "
+            "determine the module root path."
+        )
+    path = pathlib.Path(main_module.__file__).resolve().parent
+
+    return str(path)
 
 
 def get_module_source_from_class(
@@ -277,27 +280,7 @@ def resolve_class(class_: Type[Any]) -> str:
     if is_standard_source(initial_source):
         return resolve_standard_source(initial_source)
 
-    try:
-        file_path = inspect.getfile(class_)
-    except TypeError:
-        # builtin file
-        return initial_source
-
-    if (
-        initial_source.startswith("__main__")
-        or not is_inside_repository(file_path)
-        or is_third_party_module(file_path)
-    ):
-        return initial_source
-
-    # Regular user file inside the repository -> get the full module
-    # path relative to the repository
-    module_source = get_module_source_from_file_path(file_path)
-
-    # ENG-123 Sanitize for Windows OS
-    # module_source = module_source.replace("\\", ".")
-
-    return module_source + "." + class_.__name__
+    return initial_source
 
 
 def import_class_by_path(class_path: str) -> Type[Any]:
@@ -326,27 +309,22 @@ def prepend_python_path(path: str) -> Iterator[None]:
         sys.path.remove(path)
 
 
-def load_source_path_class(source: str) -> Type[Any]:
+def load_source_path_class(
+    source: str, import_path: Optional[str] = None
+) -> Type[Any]:
     """Loads a Python class from the source.
 
     Args:
         source: class_source e.g. this.module.Class[@sha]
+        import_path: optional path to add to python path
     """
-    from zenml.repository import Repository
-
-    repo_path = str(Repository.find_repository())
-
     if "@" in source:
         source = source.split("@")[0]
-    else:
-        logger.debug(
-            "Unpinned source path found with no git sha: %s. Attempting to "
-            "load class from current repository state.",
-            source,
-        )
 
-    with prepend_python_path(repo_path):
-        return import_class_by_path(source)
+    if import_path is not None:
+        with prepend_python_path(import_path):
+            return import_class_by_path(source)
+    return import_class_by_path(source)
 
 
 def import_python_file(file_path: str) -> types.ModuleType:

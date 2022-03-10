@@ -13,7 +13,8 @@
 #  permissions and limitations under the License.
 import base64
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -30,10 +31,45 @@ class BaseStackStore(ABC):
 
     # Public Interface:
 
+    @abstractmethod
+    def initialize(self, url: str, *args: Any, **kwargs: Any) -> None:
+        """Initialize the store."""
+
     @property
     @abstractmethod
-    def version(self) -> str:
-        """Get the ZenML version."""
+    def url(self) -> str:
+        """Get the repository URL."""
+
+    @staticmethod
+    @abstractmethod
+    def get_path_from_url(url: str) -> Optional[Path]:
+        """Get the path from a URL, if it points or is backed by a local file.
+
+        Args:
+            url: The URL to get the path from.
+
+        Returns:
+            The local path backed by the URL, or None if the URL is not backed
+            by a local file or directory
+        """
+
+    @staticmethod
+    @abstractmethod
+    def get_local_url(path: str) -> str:
+        """Get a local URL for a given local path."""
+
+    @staticmethod
+    @abstractmethod
+    def is_valid_url(url: str) -> bool:
+        """Check if the given url is valid."""
+
+    @abstractmethod
+    def is_empty(self) -> bool:
+        """Check if the store is empty (no stacks are configured).
+
+        The implementation of this method should check if the store is empty
+        without having to load all the stacks from the persistent storage.
+        """
 
     @abstractmethod
     def get_stack_configuration(
