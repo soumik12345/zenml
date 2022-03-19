@@ -54,7 +54,7 @@ class GlobalConfigMetaClass(ModelMetaclass):
     def __init__(cls, *args: Any, **kwargs: Any) -> None:
         """Initialize a singleton class."""
         super().__init__(*args, **kwargs)
-        cls.__global_config: Optional["GlobalConfig"] = None
+        cls._global_config: Optional["GlobalConfig"] = None
 
     def __call__(cls, *args: Any, **kwargs: Any) -> "GlobalConfig":
         """Create or return the default global config instance.
@@ -67,14 +67,14 @@ class GlobalConfigMetaClass(ModelMetaclass):
         if args or kwargs:
             return cast("GlobalConfig", super().__call__(*args, **kwargs))
 
-        if not cls.__global_config:
-            cls.__global_config = cast(
+        if not cls._global_config:
+            cls._global_config = cast(
                 "GlobalConfig", super().__call__(*args, **kwargs)
             )
-            cls.__global_config._migrate_config()
-            cls.__global_config._add_and_activate_default_profile()
+            cls._global_config._migrate_config()
+            cls._global_config._add_and_activate_default_profile()
 
-        return cls.__global_config
+        return cls._global_config
 
 
 class BaseGlobalConfiguration(ABC):
@@ -167,10 +167,10 @@ class ConfigProfile(BaseModel):
         super().__init__(**kwargs)
 
     @property
-    def config_path(self) -> str:
+    def config_directory(self) -> str:
         """Directory where the profile configuration is stored."""
         return os.path.join(
-            self.global_config.config_path, "profiles", self.name
+            self.global_config.config_directory, "profiles", self.name
         )
 
     def initialize(self) -> None:
@@ -183,13 +183,13 @@ class ConfigProfile(BaseModel):
 
         # Create and initialize the profile using a special repository instance.
         # This also validate and updates the store URL configuration and creates
-        # all necessary resources (e.g. paths, initial DB, defatult stacks).
+        # all necessary resources (e.g. paths, initial DB, default stacks).
         Repository(profile=self)
 
     def cleanup(self) -> None:
         """Cleanup the profile directory."""
-        if fileio.is_dir(self.config_path):
-            fileio.rm_dir(self.config_path)
+        if fileio.is_dir(self.config_directory):
+            fileio.rm_dir(self.config_directory)
 
     @property
     def global_config(self) -> "GlobalConfig":
@@ -253,8 +253,10 @@ class GlobalConfig(
 
         The `config_path` argument is only meant for internal use and testing
         purposes. User code must never pass it to the constructor. When a custom
-        `config_path` value is passed, a new GlobalConfig instance is created
-        independently of the GlobalConfig singleton.
+        `config_path` value is passed, an anomymous GlobalConfig instance is
+        created and returned independently of the GlobalConfig singleton and
+        that will have no effect as far as the rest of the ZenML core code is
+        concerned.
 
         If the config file doesn't exist yet, we try to read values from the
         legacy (ZenML version < 0.6) config file.
@@ -274,6 +276,29 @@ class GlobalConfig(
             # if the config file hasn't been written to disk, write it now to
             # make sure to persist the unique user id
             self._write_config()
+
+    @classmethod
+    def get_instance(cls) -> Optional["GlobalConfig"]:
+        """Return the GlobalConfig singleton instance.
+
+        Returns:
+            The GlobalConfig singleton instance or None, if the GlobalConfig
+            hasn't been initialized yet.
+        """
+        return cls._global_config
+
+    @classmethod
+    def _reset_instance(cls, config: Optional["GlobalConfig"] = None) -> None:
+        """Reset the GlobalConfig singleton instance.
+
+        This method is only meant for internal use and testing purposes.
+
+        Args:
+            repo: The GlobalConfig instance to set as the global singleton.
+                If None, the global GlobalConfig singleton is reset to an empty
+                value.
+        """
+        cls._global_config = config
 
     @validator("version")
     def _validate_version(cls, v: Optional[str]) -> Optional[str]:
@@ -359,7 +384,7 @@ class GlobalConfig(
         options from a legacy config file or returns an empty dictionary.
         """
         legacy_config_file = os.path.join(
-            self._config_path, LEGACY_CONFIG_FILE_NAME
+            self.config_directory, LEGACY_CONFIG_FILE_NAME
         )
 
         config_values = {}
@@ -388,7 +413,7 @@ class GlobalConfig(
 
         if not fileio.file_exists(config_file):
             fileio.create_dir_recursive_if_not_exists(
-                config_path or self._config_path
+                config_path or self.config_directory
             )
 
         yaml_utils.write_yaml(config_file, yaml_dict)
@@ -431,55 +456,53 @@ class GlobalConfig(
         config_copy = GlobalConfig(config_path=config_path)
         config_copy.profiles = {}
         profile = Repository().active_profile
-        if profile:
-            profile_copy = config_copy.add_or_update_profile(profile)
-            profile_copy.active_stack = Repository().active_stack_name
-            config_copy.activate_profile(profile.name)
 
-            if not profile.store_type or not profile.store_url:
-                # should not happen, but just in case
-                raise RuntimeError(
-                    f"No store type or URL set for profile "
-                    f"`{profile.name}`."
-                )
+        profile_copy = config_copy.add_or_update_profile(profile)
+        profile_copy.active_stack = Repository().active_stack_name
+        config_copy.activate_profile(profile.name)
 
-            # if the profile stores its state locally inside a local directory,
-            # we need to copy that as well
-            store_class = Repository.get_store_class(profile.store_type)
-            if not store_class:
-                raise RuntimeError(
-                    f"No store implementation found for store type "
-                    f"`{profile.store_type}`."
-                )
-
-            profile_path = store_class.get_path_from_url(profile.store_url)
-            dst_profile_url = store_class.get_local_url(
-                profile_copy.config_path
+        if not profile.store_type or not profile.store_url:
+            # should not happen, but just in case
+            raise RuntimeError(
+                f"No store type or URL set for profile " f"`{profile.name}`."
             )
-            dst_profile_path = store_class.get_path_from_url(dst_profile_url)
-            if profile_path and dst_profile_path:
-                if profile_path.is_dir():
-                    shutil.copytree(
-                        profile_path,
-                        dst_profile_path,
-                        dirs_exist_ok=True,
-                    )
-                else:
-                    fileio.create_dir_recursive_if_not_exists(
-                        str(dst_profile_path.parent)
-                    )
-                    shutil.copyfile(profile_path, dst_profile_path)
 
-                if load_config_path:
-                    dst_profile_url = dst_profile_url.replace(
-                        config_path, load_config_path
-                    )
-                profile_copy.store_url = dst_profile_url
-            config_copy._write_config()
+        # if the profile stores its state locally inside a local directory,
+        # we need to copy that as well
+        store_class = Repository.get_store_class(profile.store_type)
+        if not store_class:
+            raise RuntimeError(
+                f"No store implementation found for store type "
+                f"`{profile.store_type}`."
+            )
+
+        profile_path = store_class.get_path_from_url(profile.store_url)
+        dst_profile_url = store_class.get_local_url(
+            profile_copy.config_directory
+        )
+        dst_profile_path = store_class.get_path_from_url(dst_profile_url)
+        if profile_path and dst_profile_path:
+            if profile_path.is_dir():
+                shutil.copytree(
+                    profile_path,
+                    dst_profile_path,
+                )
+            else:
+                fileio.create_dir_recursive_if_not_exists(
+                    str(dst_profile_path.parent)
+                )
+                shutil.copyfile(profile_path, dst_profile_path)
+
+            if load_config_path:
+                dst_profile_url = dst_profile_url.replace(
+                    config_path, load_config_path
+                )
+            profile_copy.store_url = dst_profile_url
+        config_copy._write_config()
         return config_copy
 
     @property
-    def config_path(self) -> str:
+    def config_directory(self) -> str:
         """Directory where the global configuration file is located."""
         return self._config_path
 

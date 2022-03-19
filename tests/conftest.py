@@ -18,11 +18,11 @@ import sys
 from pathlib import Path
 
 import pytest
-import pytest_mock
 from py._builtin import execfile
 
 from tests.venv_clone_utils import clone_virtualenv
 from zenml.artifacts.base_artifact import BaseArtifact
+from zenml.config.global_config import GlobalConfig
 from zenml.constants import ENV_ZENML_DEBUG
 from zenml.materializers.base_materializer import BaseMaterializer
 from zenml.pipelines import pipeline
@@ -32,7 +32,14 @@ from zenml.steps import StepContext, step
 
 @pytest.fixture(scope="session", autouse=True)
 def base_repo(tmp_path_factory, session_mocker):
-    """Fixture to get a base clean repository for all tests."""
+    """Fixture to get a base clean global configuration and repository for all
+    tests."""
+
+    # the global configuration and repository must not have been instantiated
+    # yet, otherwise the current working configuration might be affected
+    assert GlobalConfig.get_instance() is None
+    assert Repository.get_instance() is None
+
     # original working directory
     orig_cwd = os.getcwd()
 
@@ -45,22 +52,18 @@ def base_repo(tmp_path_factory, session_mocker):
     os.chdir(tmp_path)
 
     # patch the global dir just within the scope of this function
-    logging.info(f"Tests are running in repo path: {tmp_path}")
-    session_mocker.patch.object(
-        sys.modules["zenml.io.utils"],
-        "get_global_config_directory",
-        return_value=str(tmp_path / "zenml"),
-    )
+    logging.info(f"Tests are running in path: {tmp_path}")
 
-    session_mocker.patch(
-        "zenml.config.global_config.GlobalConfig.config_directory",
-        return_value=str(tmp_path / "zenml"),
-    )
+    # set the ZENML_CONFIG_PATH environment variable to ensure that the global
+    # configuration, the configuration profiles and the local stacks used during
+    # testing are separate from those used in the current environment
+    os.environ["ZENML_CONFIG_PATH"] = str(tmp_path / "zenml")
+
     session_mocker.patch("analytics.track")
 
-    # initialize repo at path
-    Repository.initialize(root=tmp_path)
-    repo = Repository(root=tmp_path)
+    # initialize repo at the new path
+    # Repository.initialize(root=tmp_path)
+    repo = Repository()
 
     # monkey patch original cwd in for later use and yield
     repo.original_cwd = orig_cwd
@@ -70,15 +73,19 @@ def base_repo(tmp_path_factory, session_mocker):
     os.chdir(orig_cwd)
     shutil.rmtree(tmp_path)
 
+    # reset the global configuration and the repository
+    GlobalConfig._reset_instance()
+    Repository._reset_instance()
+
 
 @pytest.fixture
 def clean_repo(
     request: pytest.FixtureRequest,
     tmp_path_factory: pytest.TempPathFactory,
-    mocker: pytest_mock.MockerFixture,
     base_repo: Repository,
 ) -> Repository:
-    """Fixture to get a clean repository for an individual test.
+    """Fixture to get a clean global configuration and repository for an
+    individual test.
 
     Args:
         request: Pytest FixtureRequest object
@@ -88,29 +95,41 @@ def clean_repo(
                 zenml.io.utils.get_global_config_directory
         base_repo: Fixture that returns the base_repo that all tests use
     """
+    orig_cwd = os.getcwd()
+    orig_config_path = os.getenv("ZENML_CONFIG_PATH")
+
     # change the working directory to a fresh temp path
     test_name = request.node.name
     test_name = test_name.replace("[", "-").replace("]", "-")
     tmp_path = tmp_path_factory.mktemp(test_name)
+
     os.chdir(tmp_path)
 
-    # patch the global dir just within the scope of this function
-    mocker.patch.object(
-        sys.modules["zenml.io.utils"],
-        "get_global_config_directory",
-        return_value=str(tmp_path / "zenml"),
-    )
+    logging.info(f"Tests are running in clean environment: {tmp_path}")
+
+    # save the current global configuration and repository singleton instances
+    # to restore them later, then reset them
+    original_config = GlobalConfig.get_instance()
+    original_repository = Repository.get_instance()
+    GlobalConfig._reset_instance()
+    Repository._reset_instance()
+
+    # set the ZENML_CONFIG_PATH environment variable to ensure that the global
+    # configuration, the configuration profiles and the local stacks used in
+    # the scope of this function are separate from those used in the global
+    # testing environment
+    os.environ["ZENML_CONFIG_PATH"] = str(tmp_path / "zenml")
 
     # initialize repo with new tmp path
-    Repository.initialize(root=tmp_path)
-    repo = Repository(root=tmp_path)
+    # Repository.initialize(root=tmp_path)
+    repo = Repository()
 
     # monkey patch base repo cwd for later user and yield
     repo.original_cwd = base_repo.original_cwd
     yield repo
 
     # remove all traces, and change working directory back to base path
-    os.chdir(str(base_repo.root))
+    os.chdir(orig_cwd)
     try:
         shutil.rmtree(tmp_path)
     except PermissionError:
@@ -125,6 +144,13 @@ def clean_repo(
         )
         # Todo[HIGH]: Implement fixture cleanup for Windows where shutil.rmtree
         #  fails on files that are in use on python 3.7
+
+    # restore the global configuration path
+    os.environ["ZENML_CONFIG_PATH"] = orig_config_path
+
+    # restore the original global configuration and the repository singleton
+    GlobalConfig._reset_instance(original_config)
+    Repository._reset_instance(original_repository)
 
 
 @pytest.fixture

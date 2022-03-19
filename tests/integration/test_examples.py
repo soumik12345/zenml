@@ -215,11 +215,11 @@ def test_run_example(
 
     # Copy all example files into the repository directory
     copy_example_files(
-        str(examples_directory / example_configuration.name), str(repo.root)
+        str(examples_directory / example_configuration.name), Path.cwd()
     )
 
     # Run the example
-    example = LocalExample(name=example_configuration.name, path=repo.root)
+    example = LocalExample(name=example_configuration.name, path=Path.cwd())
     example.run_example(
         example_runner(examples_directory),
         force=True,

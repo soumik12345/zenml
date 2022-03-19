@@ -88,8 +88,7 @@ def generate_stack_component_get_command(
 
         global_stack = ""
         local_stack = repo.active_stack_name
-        if repo.active_profile:
-            global_stack = repo.active_profile.active_stack or ""
+        global_stack = repo.active_profile.active_stack or ""
 
         stacks = {
             "global": global_stack,
@@ -117,7 +116,7 @@ def generate_stack_component_get_command(
 
 def generate_stack_component_describe_command(
     component_type: StackComponentType,
-) -> Callable[[Optional[str]], None]:
+) -> Callable[[Optional[str], bool], None]:
     """Generates a `describe` command for the specific stack component type."""
 
     singular_display_name = _component_display_name(component_type)
@@ -143,7 +142,7 @@ def generate_stack_component_describe_command(
 
         repo = Repository()
 
-        if global_profile and repo.active_profile:
+        if global_profile:
             active_stack_name = repo.active_profile.active_stack
         else:
             active_stack_name = repo.active_stack_name
@@ -218,8 +217,7 @@ def generate_stack_component_list_command(
 
         global_stack = ""
         local_stack = repo.active_stack_name
-        if repo.active_profile:
-            global_stack = repo.active_profile.active_stack or ""
+        global_stack = repo.active_profile.active_stack or ""
 
         global_active_component_name = None
         if global_stack:

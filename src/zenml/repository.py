@@ -111,7 +111,7 @@ class RepositoryMetaClass(ABCMeta):
     def __init__(cls, *args: Any, **kwargs: Any) -> None:
         """Initialize the Repository class."""
         super().__init__(*args, **kwargs)
-        cls.__global_repository: Optional["Repository"] = None
+        cls._global_repository: Optional["Repository"] = None
 
     def __call__(cls, *args: Any, **kwargs: Any) -> "Repository":
         """Create or return the global Repository instance.
@@ -136,12 +136,12 @@ class RepositoryMetaClass(ABCMeta):
         if args or kwargs:
             return cast("Repository", super().__call__(*args, **kwargs))
 
-        if not cls.__global_repository:
-            cls.__global_repository = cast(
+        if not cls._global_repository:
+            cls._global_repository = cast(
                 "Repository", super().__call__(*args, **kwargs)
             )
 
-        return cls.__global_repository
+        return cls._global_repository
 
 
 class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
@@ -164,30 +164,41 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
 
         The `root` and `profile` arguments are only meant for internal use
         and testing purposes. User code must never pass them to the constructor.
-        When a custom `root` or `profile` value is passed, a new Repository
-        instance is created independently of the Repository singleton.
+        When a custom `root` or `profile` value is passed, an anomymous
+        Repository instance is created and returned independently of the
+        Repository singleton and that will have no effect as far as the rest of
+        the ZenML core code is concerned.
+
+        Instead of creating a new Repository instance to reflect a different
+        profile or repository root:
+
+          * to change the active profile in the global Repository,
+          call `Repository().activate_profile(<new-profile>)`.
+          * to change the active root in the global Repository,
+          call `Repository().activate_root(<new-root>)`.
 
         Args:
             root: (internal use) custom root directory for the repository. If
-                no path is given, the repository root is determinted using the
+                no path is given, the repository root is determined using the
                 environment variable `ZENML_REPOSITORY_PATH` (if set) and by
                 recursively searching in the parent directories of the
                 current working directory. Only used to initialize new
-                repositories.
+                repositories internally.
             profile: (internal use) custom configuration profile to use for the
                 repository. If not provided, the active profile is determined
                 from the loaded repository configuration. If no repository
-                configuration is found (i.e. no repository is initialized),
-                the default global profile is used. Only used to initialize
-                new profiles.
+                configuration is found (i.e. repository root is not
+                initialized), the default global profile is used. Only used to
+                initialize new profiles internally.
         """
 
         self._root: Optional[Path] = None
+        self._profile: Optional[ConfigProfile] = None
         self.__config: Optional[RepositoryConfiguration] = None
 
         # The repository is initialized with a custom profile only when the
         # profile needs to be initialized, in which case all matters related to
-        # repository initialization, like the repository root and the
+        # repository initialization, like the repository active root and the
         # repository configuration stored there are ignored
         if profile:
             # calling this will initialize the store and create the default
@@ -195,26 +206,69 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
             self._set_active_profile(profile)
             return
 
+        self._set_active_root(root)
+
+    @classmethod
+    def get_instance(cls) -> Optional["Repository"]:
+        """Return the Repository singleton instance.
+
+        Returns:
+            The Repository singleton instance or None, if the Repository hasn't
+            been initialized yet.
+        """
+        return cls._global_repository
+
+    @classmethod
+    def _reset_instance(cls, repo: Optional["Repository"] = None) -> None:
+        """Reset the Repository singleton instance.
+
+        This method is only meant for internal use and testing purposes.
+
+        Args:
+            repo: The Repository instance to set as the global singleton.
+                If None, the global Repository singleton is reset to an empty
+                value.
+        """
+        cls._global_repository = repo
+
+    def _set_active_root(self, root: Optional[Path] = None) -> None:
+        """Set the supplied path as the repository root.
+
+        If a repository configuration is found at the given path or the
+        path, it is loaded and used to initialize the repository and its
+        active profile. If no repository configuration is found, the
+        global configuration is used instead (e.g. to manage the active
+        profile and active stack).
+
+        Args:
+            root: The path to set as the active repository root. If not set,
+                the repository root is determined using the environment
+                variable `ZENML_REPOSITORY_PATH` (if set) and by recursively
+                searching in the parent directories of the current working
+                directory.
+        """
+
         self._root = self.find_repository(root)
 
         global_cfg = GlobalConfig()
+        new_profile = self._profile
 
         if not self._root:
-            logger.warning("Runnning with uninitialized repository.")
+            logger.info("Runnning without an active repository root.")
         else:
             logger.debug("Using repository root %s.", self._root)
             self.__config = self._load_config()
 
             if self.__config and self.__config.active_profile_name:
-                profile = global_cfg.get_profile(
+                new_profile = global_cfg.get_profile(
                     self.__config.active_profile_name
                 )
 
         # fall back to the global active profile if one cannot be determined
         # from the repository configuration
-        profile = profile or global_cfg.active_profile
+        new_profile = new_profile or global_cfg.active_profile
 
-        if not profile:
+        if not new_profile:
             # this should theoretically never happen, because there is always
             # a globally active profile, but we need to be prepared for it
             raise RuntimeError(
@@ -223,7 +277,15 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
                 "set <profile-name>`."
             )
 
-        self._set_active_profile(profile)
+        if new_profile != self._profile:
+            logger.debug(
+                "Activating configuration profile %s.", new_profile.name
+            )
+            self._set_active_profile(new_profile)
+
+        # Sanitize the repository configuration to reflect the new active
+        # repository configuration
+        self._sanitize_config()
 
     def _set_active_profile(self, profile: ConfigProfile) -> None:
         """Set the supplied configuration profile as the active profile for
@@ -245,7 +307,7 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
             self.initialize_store()
 
         # Sanitize the repository configuration to reflect the active
-        # profile and initialized store contents
+        # profile and its store contents
         self._sanitize_config()
 
     def _config_path(self) -> Optional[str]:
@@ -277,7 +339,7 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
         global_cfg = GlobalConfig()
 
         # Sanitize the repository active profile
-        if self.__config.active_profile_name != self._profile.name:
+        if self.__config.active_profile_name != self.active_profile_name:
             if (
                 self.__config.active_profile_name
                 and not global_cfg.has_profile(
@@ -288,15 +350,15 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
                     "Profile `%s` not found. Switching repository to the "
                     "global active profile `%s`",
                     self.__config.active_profile_name,
-                    self._profile.name,
+                    self.active_profile_name,
                 )
             # reset the active stack when switching to a different profile
             self.__config.active_stack_name = None
-            self.__config.active_profile_name = self._profile.name
+            self.__config.active_profile_name = self.active_profile_name
 
         # As a backup for the active stack, use the profile's default stack
         # or to the first stack in the repository
-        backup_stack_name = self._profile.active_stack
+        backup_stack_name = self.active_profile.active_stack
         if not backup_stack_name:
             stacks = self.stack_store.stacks
             if stacks:
@@ -328,18 +390,19 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
 
     def _load_config(self) -> Optional[RepositoryConfiguration]:
         """Loads the repository configuration from disk, if the repository has
-        been initialized and the configuration file exists. If the configuration
+        an active root and the configuration file exists. If the configuration
         file doesn't exist, an empty configuration is returned.
 
         If a legacy repository configuration is found in the repository root,
         it is migrated to the new configuration format.
 
-        If the repository has not been initialized, no repository configuration
-        is used and the active profile configuration takes precedence.
+        If the repository doesn't have an active root, no repository
+        configuration is used and the active profile configuration takes
+        precedence.
 
         Returns:
-            Loaded repository configuration or None if the repository has not
-            been initialized.
+            Loaded repository configuration or None if the repository does not
+            have an active root.
         """
 
         config_path = self._config_path()
@@ -441,7 +504,9 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
             )
 
         if not profile.store_url:
-            profile.store_url = store_class.get_local_url(profile.config_path)
+            profile.store_url = store_class.get_local_url(
+                profile.config_directory
+            )
 
         if store_class.is_valid_url(profile.store_url):
             store = store_class()
@@ -506,11 +571,23 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
 
         Returns:
             The configuration directory of this repository, or None, if the
-            repository has not been initialized.
+            repository doesn't have an active root.
         """
         if not self.root:
             return None
         return self.root / REPOSITORY_DIRECTORY_NAME
+
+    def activate_root(self, root: Optional[Path] = None) -> None:
+        """Set the active repository root directory.
+
+        Args:
+            root: The path to set as the active repository root. If not set,
+                the repository root is determined using the environment
+                variable `ZENML_REPOSITORY_PATH` (if set) and by recursively
+                searching in the parent directories of the current working
+                directory.
+        """
+        self._set_active_root(root)
 
     def activate_profile(self, profile_name: str) -> None:
         """Set a profile as the active profile for the repository.
@@ -529,30 +606,43 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
         self._set_active_profile(profile)
 
         # set the active profile in the global configuration if the repository
-        # doesn't have a configuration (i.e. if a repository root has not been
+        # doesn't have a root configured (i.e. if a repository root has not been
         # initialized)
-        if not self.__config:
+        if not self.root:
             global_cfg.activate_profile(profile_name)
 
     @property
-    def active_profile(self) -> Optional[ConfigProfile]:
+    def active_profile(self) -> ConfigProfile:
         """Return the profile set as active for the repository.
 
         Returns:
-            The active profile or None, if no active profile is set.
+            The active profile.
+
+        Raises:
+            RuntimeError: If no profile is set as active.
         """
+        if not self._profile:
+            # this should theoretically never happen, because there is always
+            # a globally active profile, but we need to be prepared for it
+            raise RuntimeError(
+                "No active configuration profile found. Please set the active "
+                "profile in the global configuration by running `zenml profile "
+                "set <profile-name>`."
+            )
+
         return self._profile
 
     @property
-    def active_profile_name(self) -> Optional[str]:
+    def active_profile_name(self) -> str:
         """Return the name of the profile set as active for the repository.
 
         Returns:
-            The active profile name or None, if no active profile is set.
+            The active profile name.
+
+        Raises:
+            RuntimeError: If no profile is set as active.
         """
-        if not self._profile:
-            return None
-        return self._profile.name
+        return self.active_profile.name
 
     @property
     def stacks(self) -> List[Stack]:
@@ -584,32 +674,26 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
             KeyError: If no stack was found for the configured name or one
                 of the stack components is not registered.
         """
-        active_stack_name = self.active_stack_name
-        if not active_stack_name:
-            raise RuntimeError(
-                "No active stack is configured for the repository. Run "
-                "`zenml stack set STACK_NAME` to update the active stack."
-            )
-        return self.get_stack(name=active_stack_name)
+        return self.get_stack(name=self.active_stack_name)
 
     @property
-    def active_stack_name(self) -> Optional[str]:
+    def active_stack_name(self) -> str:
         """The name of the active stack for this repository.
 
         If no active stack is configured for the repository, or if the
-        repository is not initialized, the active stack from the associated
-        or global profile is used instead.
+        repository does not have an active root, the active stack from the
+        associated or global profile is used instead.
 
         Raises:
-            RuntimeError: If no active stack name is configured neither in the
-            repository nor in the associated profile.
+            RuntimeError: If no active stack name is set neither in the
+            repository configuration nor in the associated profile.
         """
         stack_name = None
         if self.__config:
             stack_name = self.__config.active_stack_name
 
         if not stack_name:
-            stack_name = self._profile.active_stack
+            stack_name = self.active_profile.active_stack
 
         if not stack_name:
             raise RuntimeError(
@@ -634,11 +718,11 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
             self.__config.active_stack_name = name
             self._write_config()
 
-        # set the active stack in the associated profile only if the repository
-        # doesn't have its own configuration (i.e. created outside of a repo
-        # root directory) or if no active stack has been set for it yet
-        if not self.__config or not self._profile.active_stack:
-            self._profile.activate_stack(name)
+        # set the active stack globally in the active profile only if the
+        # repository doesn't have a root configured (i.e. repository root hasn't
+        # been initialized) or if no active stack has been set for it yet
+        if not self.root or not self.active_profile.active_stack:
+            self.active_profile.activate_stack(name)
 
     def get_stack(self, name: str) -> Stack:
         """Fetches a stack.

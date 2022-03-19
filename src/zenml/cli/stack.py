@@ -136,8 +136,7 @@ def list_stacks() -> None:
         return
 
     global_stack = ""
-    if repo.active_profile:
-        global_stack = repo.active_profile.active_stack or ""
+    global_stack = repo.active_profile.active_stack or ""
 
     stack_dicts = []
     for stack_name, stack_configuration in repo.stack_configurations.items():
@@ -187,9 +186,7 @@ def describe_stack(
 
     repo = Repository()
 
-    global_stack = ""
-    if repo.active_profile:
-        global_stack = repo.active_profile.active_stack or ""
+    global_stack = repo.active_profile.active_stack or ""
     if global_profile:
         stack_name = stack_name or global_stack
     else:
@@ -277,7 +274,7 @@ def set_active_stack(stack_name: str, global_profile: bool = False) -> None:
         f"{repo.active_profile_name} to `{stack_name}`..."
     ):
 
-        if global_profile and repo.active_profile:
+        if global_profile:
             repo.active_profile.activate_stack(stack_name)
         else:
             repo.activate_stack(stack_name)
@@ -296,16 +293,15 @@ def get_active_stack() -> None:
     with console.status("Getting the active stack..."):
 
         repo = Repository()
-        if repo.active_profile:
-            cli_utils.declare(
-                f"Globally active stack for active profile "
-                f"`{repo.active_profile_name}` is: "
-                f"`{repo.active_profile.active_stack}`"
-            )
-            cli_utils.declare(
-                f"Locally active stack for active profile "
-                f"`{repo.active_profile_name}` is: `{repo.active_stack_name}`"
-            )
+        cli_utils.declare(
+            f"Globally active stack for active profile "
+            f"`{repo.active_profile_name}` is: "
+            f"`{repo.active_profile.active_stack}`"
+        )
+        cli_utils.declare(
+            f"Locally active stack for active profile "
+            f"`{repo.active_profile_name}` is: `{repo.active_stack_name}`"
+        )
 
 
 @stack.command("up")
