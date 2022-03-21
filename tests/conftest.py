@@ -62,7 +62,6 @@ def base_repo(tmp_path_factory, session_mocker):
     session_mocker.patch("analytics.track")
 
     # initialize repo at the new path
-    # Repository.initialize(root=tmp_path)
     repo = Repository()
 
     # monkey patch original cwd in for later use and yield
@@ -121,7 +120,6 @@ def clean_repo(
     os.environ["ZENML_CONFIG_PATH"] = str(tmp_path / "zenml")
 
     # initialize repo with new tmp path
-    # Repository.initialize(root=tmp_path)
     repo = Repository()
 
     # monkey patch base repo cwd for later user and yield

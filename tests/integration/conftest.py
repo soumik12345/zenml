@@ -11,12 +11,14 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 #  or implied. See the License for the specific language governing
 #  permissions and limitations under the License.
+import logging
 import os
 import shutil
 from typing import Generator
 
 import pytest
 from pytest_mock import MockerFixture
+from zenml.config.global_config import GlobalConfig
 
 from zenml.container_registries import BaseContainerRegistry
 from zenml.repository import Repository
@@ -29,7 +31,8 @@ def shared_kubeflow_repo(
     tmp_path_factory: pytest.TempPathFactory,
     module_mocker: MockerFixture,
 ) -> Generator[Repository, None, None]:
-    """Creates a repo with a locally provisioned kubeflow stack.
+    """Creates a clean global configuration and repository with a locally
+    provisioned kubeflow stack.
 
     As the resource provisioning for the local kubeflow deployment takes quite
     a while, this fixture has a module scope and will therefore only run once.
@@ -56,8 +59,25 @@ def shared_kubeflow_repo(
 
     tmp_path = tmp_path_factory.mktemp("tmp")
     os.chdir(tmp_path)
-    Repository.initialize(root=tmp_path)
-    repo = Repository(root=tmp_path)
+
+    logging.info(f"Tests are running in clean environment: {tmp_path}")
+
+    # save the current global configuration and repository singleton instances
+    # to restore them later, then reset them
+    original_config = GlobalConfig.get_instance()
+    original_repository = Repository.get_instance()
+    GlobalConfig._reset_instance()
+    Repository._reset_instance()
+
+    # set the ZENML_CONFIG_PATH environment variable to ensure that the global
+    # configuration, the configuration profiles and the local stacks used in
+    # the scope of this function are separate from those used in the global
+    # testing environment
+    orig_config_path = os.getenv("ZENML_CONFIG_PATH")
+    os.environ["ZENML_CONFIG_PATH"] = str(tmp_path / "zenml")
+
+    # initialize repo with new tmp path
+    repo = Repository()
 
     repo.original_cwd = base_repo.original_cwd
 
@@ -96,6 +116,12 @@ def shared_kubeflow_repo(
     os.chdir(str(base_repo.root))
     shutil.rmtree(tmp_path)
 
+    # restore the global configuration path
+    os.environ["ZENML_CONFIG_PATH"] = orig_config_path
+
+    # restore the original global configuration and the repository singleton
+    GlobalConfig._reset_instance(original_config)
+    Repository._reset_instance(original_repository)
 
 @pytest.fixture
 def clean_kubeflow_repo(
