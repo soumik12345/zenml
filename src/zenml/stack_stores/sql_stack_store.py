@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.engine.url import make_url
+from sqlalchemy.exc import ArgumentError
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from zenml.enums import StackComponentType
@@ -128,7 +129,7 @@ class SqlStackStore(BaseStackStore):
         """Check if the given url is a valid SQL url."""
         try:
             make_url(url)
-        except Exception:
+        except ArgumentError:
             logger.debug("Invalid SQL URL: %s", url)
             return False
 

@@ -135,7 +135,6 @@ def list_stacks() -> None:
         cli_utils.warning("No stacks registered!")
         return
 
-    global_stack = ""
     global_stack = repo.active_profile.active_stack or ""
 
     stack_dicts = []

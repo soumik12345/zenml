@@ -14,6 +14,7 @@
 import base64
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -96,7 +97,8 @@ class LocalStackStore(BaseStackStore):
     @staticmethod
     def is_valid_url(url: str) -> bool:
         """Check if the given url is a valid local path."""
-        return url.startswith("file://") or url.startswith("/")
+        scheme = re.search("^([a-z0-9]+://)", url)
+        return not scheme or scheme.group() == "file://"
 
     def is_empty(self) -> bool:
         """Check if the stack store is empty."""

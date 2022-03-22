@@ -86,7 +86,6 @@ def generate_stack_component_get_command(
 
         repo = Repository()
 
-        global_stack = ""
         local_stack = repo.active_stack_name
         global_stack = repo.active_profile.active_stack or ""
 
@@ -215,7 +214,6 @@ def generate_stack_component_list_command(
             cli_utils.warning(f"No {display_name} registered.")
             return
 
-        global_stack = ""
         local_stack = repo.active_stack_name
         global_stack = repo.active_profile.active_stack or ""
 
