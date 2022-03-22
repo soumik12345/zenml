@@ -65,7 +65,7 @@ def is_inside_repository(file_path: str) -> bool:
     """Returns whether a file is inside a zenml repository."""
     from zenml.repository import Repository
 
-    repo_path = Repository().root
+    repo_path = Repository.find_repository()
     if not repo_path:
         return False
 
@@ -153,6 +153,10 @@ def get_module_source_from_module(module: ModuleType) -> str:
       returns `pipeline` if no repository root is specified and the main
       module is also in `/home/myrepo/src`.
 
+      * a `/home/step.py` module not running as the main module
+      returns `step` if the CWD is /home and the repository root or the main
+      module are in a different path (e.g. `/home/myrepo/src`).
+
     Args:
         module: the module to get the source of.
 
@@ -174,7 +178,13 @@ def get_module_source_from_module(module: ModuleType) -> str:
     root_path = get_source_root_path()
 
     if not module_path.startswith(root_path):
-        logger.warning("User module %s is not in the repository root.", module)
+        root_path = os.getcwd()
+        logger.warning(
+            "User module %s is not in the source root. Using current "
+            "directory %s instead to resolve module source.",
+            module,
+            root_path,
+        )
 
     # Remove root_path from module_path to get relative path left over
     module_path = module_path.replace(root_path, "")[1:]
@@ -182,6 +192,11 @@ def get_module_source_from_module(module: ModuleType) -> str:
     # Kick out the .py and replace `/` with `.` to get the module source
     module_path = module_path.replace(".py", "")
     module_source = module_path.replace("/", ".")
+
+    logger.debug(
+        f"Resolved module source for module {module} to: {module_source}"
+    )
+
     return module_source
 
 
@@ -231,8 +246,9 @@ def get_source_root_path() -> str:
     """
     from zenml.repository import Repository
 
-    repo_root = Repository().root
+    repo_root = Repository.find_repository()
     if repo_root:
+        logger.debug("Using repository root as source root: %s", repo_root)
         return str(repo_root.resolve())
 
     main_module = sys.modules.get("__main__")
@@ -249,6 +265,7 @@ def get_source_root_path() -> str:
         )
     path = pathlib.Path(main_module.__file__).resolve().parent
 
+    logger.debug("Using main module location as source root: %s", path)
     return str(path)
 
 
@@ -380,6 +397,8 @@ def resolve_class(class_: Type[Any]) -> str:
     # ENG-123 Sanitize for Windows OS
     # module_source = module_source.replace("\\", ".")
 
+    logger.debug(f"Resolved class {class_} to {module_source}")
+
     return module_source + "." + class_.__name__
 
 
@@ -418,11 +437,20 @@ def load_source_path_class(
         source: class_source e.g. this.module.Class[@sha]
         import_path: optional path to add to python path
     """
+    from zenml.repository import Repository
+
+    repo_root = Repository.find_repository()
+    if not import_path and repo_root:
+        import_path = str(repo_root)
+
     if "@" in source:
         source = source.split("@")[0]
 
     if import_path is not None:
         with prepend_python_path(import_path):
+            logger.debug(
+                f"Loading class {source} with import path {import_path}"
+            )
             return import_class_by_path(source)
     return import_class_by_path(source)
 

@@ -11,6 +11,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
 #  or implied. See the License for the specific language governing
 #  permissions and limitations under the License.
+import logging
 import os
 import shutil
 import sys
@@ -234,4 +235,15 @@ def test_run_example(
     example_configuration.validation_function(repo)
 
     # clean up
-    shutil.rmtree(tmp_path)
+    try:
+        shutil.rmtree(tmp_path)
+    except PermissionError:
+        # Windows does not have the concept of unlinking a file and deleting
+        # once all processes that are accessing the resource are done
+        # instead windows tries to delete immediately and fails with a
+        # PermissionError: [WinError 32] The process cannot access the
+        # file because it is being used by another process
+        logging.debug(
+            "Skipping deletion of temp dir at teardown, due to "
+            "Windows Permission error"
+        )

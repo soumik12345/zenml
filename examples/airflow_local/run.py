@@ -19,13 +19,16 @@ from pipeline import (
     sklearn_trainer,
 )
 
-# Initialize a new pipeline run
-scikit_p = mnist_pipeline(
-    importer=dynamic_importer(),
-    normalizer=normalize_mnist(),
-    trainer=sklearn_trainer(),
-    evaluator=sklearn_evaluator(),
-)
 
-# Run the new pipeline
-DAG = scikit_p.run()
+if __name__ == "__main__":
+
+    # Initialize a new pipeline run
+    scikit_p = mnist_pipeline(
+        importer=dynamic_importer(),
+        normalizer=normalize_mnist(),
+        trainer=sklearn_trainer(),
+        evaluator=sklearn_evaluator(),
+    )
+
+    # Run the new pipeline
+    DAG = scikit_p.run()

@@ -15,6 +15,7 @@
 from typing import TYPE_CHECKING, Optional
 
 import click
+from rich.markdown import Markdown
 
 from zenml.cli import utils as cli_utils
 from zenml.cli.cli import cli
@@ -174,7 +175,10 @@ def list_profiles_command() -> None:
         }
         profile_dicts.append(profile_config)
 
-    cli_utils.print_table(profile_dicts)
+    cli_utils.print_table(
+        profile_dicts,
+        caption=":crown: = globally active, :point_right: = locally active",
+    )
 
 
 @profile.command(
@@ -324,3 +328,137 @@ def get_active_profile() -> None:
             cli_utils.declare(
                 f"Locally active profile is: {active_profile_name}"
             )
+
+
+@profile.command("explain")
+def explain_profile() -> None:
+    """Explains the concept of ZenML profiles."""
+
+    console.print(
+        Markdown(
+            """
+Profiles are configuration contexts that can be used to manage multiple
+individual ZenML global configurations on the same machine. ZenML Stacks and
+Stack Components, as well as the active Stack can be configured for a Profile
+independently of other Profiles.
+
+A `default` Profile is created automatically and set as the active Profile the
+first time ZenML runs on a machine:
+
+```
+$ zenml profile list
+Unable to find ZenML repository in your current working directory (/home/stefan)
+or any parent directories. If you want to use an existing repository which is in
+a different location, set the environment variable 'ZENML_REPOSITORY_PATH'. If
+you want to create a new repository, run `zenml init`.
+Creating default profile...
+Initializing profile `default`...
+Initializing store...
+Registered stack component with type 'orchestrator' and name 'default'.
+Registered stack component with type 'metadata_store' and name 'default'.
+Registered stack component with type 'artifact_store' and name 'default'.
+Registered stack with name 'default'.
+Created and activated default profile.
+Runnning without an active repository root.
+Running with active profile: `default` (global)
+┏━━━━━━━━┯━━━━━━━━━━━━━━┯━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━━━━━┓
+┃ ACTIVE │ PROFILE NAME │ STORE TYPE │ URL                                                │ GLOBAL ACTIVE STACK │ LOCAL ACTIVE STACK ┃
+┠────────┼──────────────┼────────────┼────────────────────────────────────────────────────┼─────────────────────┼────────────────────┨
+┃  👑👉  │ default      │ local      │ file:///home/stefan/.config/zenml/profiles/default │ default             │ default            ┃
+┗━━━━━━━━┷━━━━━━━━━━━━━━┷━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━━━━━┛
+👑 = globally active, 👉 = locally active
+```
+
+
+Additional Profiles can be created by running `zenml profile create`. Every
+Profile, including the `default` profile will have a `default` local Stack
+automatically registered and set as the active Stack for that Profile.
+
+```
+$ zenml profile create zenml
+Runnning without an active repository root.
+Running with active profile: `default` (global)
+Initializing profile `zenml`...
+Initializing store...
+Registered stack component with type 'orchestrator' and name 'default'.
+Registered stack component with type 'metadata_store' and name 'default'.
+Registered stack component with type 'artifact_store' and name 'default'.
+Registered stack with name 'default'.
+Profile `zenml` successfully created.
+```
+
+Any Profile can be set as the active Profile by running `zenml profile set`.
+The active Profile determines the Stacks and Stack Components that are
+available for use by ZenML pipelines. New Stacks and Stack Components
+registered via the CLI are added to the active Profile and will only be
+available as long as that Profile is active.
+
+```
+$ zenml profile set zenml
+Runnning without an active repository root.
+Running with active profile: `default` (global)
+Active profile changed to: zenml
+
+$ zenml stack register local -m default -a default -o default
+Runnning without an active repository root.
+Running with active profile: `zenml` (global)
+Registered stack with name 'local'.
+Stack `local` successfully registered!
+
+$ zenml stack set local
+Runnning without an active repository root.
+Running with active profile: `zenml` (global)
+Active local stack for active profile `zenml`: `local`
+
+$ zenml stack list
+Runnning without an active repository root.
+Running with active profile: `zenml` (global)
+┏━━━━━━━━┯━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━┓
+┃ ACTIVE │ STACK NAME │ ARTIFACT_STORE │ METADATA_STORE │ ORCHESTRATOR ┃
+┠────────┼────────────┼────────────────┼────────────────┼──────────────┨
+┃        │ default    │ default        │ default        │ default      ┃
+┃  👑👉  │ local      │ default        │ default        │ default      ┃
+┗━━━━━━━━┷━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━┛
+👑 = globally active, 👉 = locally active
+```
+
+All other ZenML commands and the ZenML pipeline themselves will run
+in the context of the active Profile and will only have access to the
+Stacks and Stack Components configured for that Profile.
+
+When running inside an initialized ZenML Repository, the active Profile
+and active Stack can also be configured locally, just for that particular
+Repository. The Stacks and Stack Components visible inside a Repository are
+those configured for the active Profile.
+
+```
+/tmp/zenml$ zenml init
+ZenML repository initialized at /tmp/zenml.
+
+/tmp/zenml$ zenml stack list
+Running with active profile: `zenml` (local)
+┏━━━━━━━━┯━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━┓
+┃ ACTIVE │ STACK NAME │ ARTIFACT_STORE │ METADATA_STORE │ ORCHESTRATOR ┃
+┠────────┼────────────┼────────────────┼────────────────┼──────────────┨
+┃        │ default    │ default        │ default        │ default      ┃
+┃  👑👉  │ local      │ default        │ default        │ default      ┃
+┗━━━━━━━━┷━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━┛
+👑 = globally active, 👉 = locally active
+
+/tmp/zenml$ zenml stack set default
+Running with active profile: `zenml` (local)
+Active local stack for active profile `zenml`: `default`
+
+/tmp/zenml$ zenml stack list
+Running with active profile: `zenml` (local)
+┏━━━━━━━━┯━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━━━┯━━━━━━━━━━━━━━┓
+┃ ACTIVE │ STACK NAME │ ARTIFACT_STORE │ METADATA_STORE │ ORCHESTRATOR ┃
+┠────────┼────────────┼────────────────┼────────────────┼──────────────┨
+┃   👉   │ default    │ default        │ default        │ default      ┃
+┃   👑   │ local      │ default        │ default        │ default      ┃
+┗━━━━━━━━┷━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━┛
+👑 = globally active, 👉 = locally active
+```
+     """
+        )
+    )

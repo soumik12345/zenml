@@ -40,9 +40,7 @@ class BaseStackStore(ABC):
 
         # register the default stack
         stack = Stack.default_local_stack()
-        metadata = self.register_stack(
-            StackWrapper.from_stack(stack)
-        )
+        metadata = self.register_stack(StackWrapper.from_stack(stack))
         track_event(AnalyticsEvent.REGISTERED_STACK, metadata=metadata)
 
     # Public Interface:

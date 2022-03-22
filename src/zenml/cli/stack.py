@@ -154,7 +154,10 @@ def list_stacks() -> None:
         }
         stack_dicts.append(stack_config)
 
-    cli_utils.print_table(stack_dicts)
+    cli_utils.print_table(
+        stack_dicts,
+        caption=":crown: = globally active, :point_right: = locally active",
+    )
 
 
 @stack.command(

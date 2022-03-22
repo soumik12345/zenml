@@ -101,7 +101,11 @@ def pretty_print(obj: Any) -> None:
     console.print(obj)
 
 
-def print_table(obj: List[Dict[str, Any]]) -> None:
+def print_table(
+    obj: List[Dict[str, Any]],
+    title: Optional[str] = None,
+    caption: Optional[str] = None,
+) -> None:
     """Prints the list of dicts in a table format. The input object should be a
     List of Dicts. Each item in that list represent a line in the Table. Each
     dict should have the same keys. The keys of the dict will be used as
@@ -111,7 +115,14 @@ def print_table(obj: List[Dict[str, Any]]) -> None:
       obj: A List containing dictionaries.
     """
     columns = {key.upper(): None for dict_ in obj for key in dict_.keys()}
-    rich_table = table.Table(*columns.keys(), box=box.HEAVY_EDGE)
+    rich_table = table.Table(
+        *columns.keys(),
+        box=box.HEAVY_EDGE,
+        title=title,
+        caption=caption,
+        caption_justify="left",
+        title_justify="left",
+    )
 
     for dict_ in obj:
         values = columns.copy()
@@ -173,7 +184,10 @@ def print_stack_component_list(
             },
         }
         configurations.append(component_config)
-    print_table(configurations)
+    print_table(
+        configurations,
+        caption=":crown: = globally active, :point_right: = locally active",
+    )
 
 
 def print_stack_configuration(
