@@ -21,7 +21,9 @@ import yaml
 from zenml.enums import StackComponentType
 from zenml.exceptions import StackComponentExistsError, StackExistsError
 from zenml.logger import get_logger
+from zenml.stack import Stack
 from zenml.stack_stores.models import StackComponentWrapper, StackWrapper
+from zenml.utils.analytics_utils import AnalyticsEvent, track_event
 
 logger = get_logger(__name__)
 
@@ -29,11 +31,30 @@ logger = get_logger(__name__)
 class BaseStackStore(ABC):
     """Base class for accessing data in ZenML Repository and new Service."""
 
+    def register_default_stack(self) -> None:
+        """Populates the store with the default Stack.
+
+        The default stack contains a local orchestrator,
+        a local artifact store and a local SQLite metadata store.
+        """
+
+        # register the default stack
+        stack = Stack.default_local_stack()
+        metadata = self.register_stack(
+            StackWrapper.from_stack(stack)
+        )
+        track_event(AnalyticsEvent.REGISTERED_STACK, metadata=metadata)
+
     # Public Interface:
 
     @abstractmethod
     def initialize(self, url: str, *args: Any, **kwargs: Any) -> None:
         """Initialize the store."""
+
+        if self.is_empty():
+
+            logger.info("Initializing store...")
+            self.register_default_stack()
 
     @property
     @abstractmethod

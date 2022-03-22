@@ -196,9 +196,9 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
         self._profile: Optional[ConfigProfile] = None
         self.__config: Optional[RepositoryConfiguration] = None
 
-        # The repository is initialized with a custom profile only when the
-        # profile needs to be initialized, in which case all matters related to
-        # repository initialization, like the repository active root and the
+        # The repository constructor is called with a custom profile only when
+        # the profile needs to be initialized, in which case all matters related
+        # to repository initialization, like the repository active root and the
         # repository configuration stored there are ignored
         if profile:
             # calling this will initialize the store and create the default
@@ -300,11 +300,6 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
         """
         self._profile = profile
         self.stack_store: BaseStackStore = self.create_store(profile)
-
-        # Populate the repository store with the default stack
-        # configuration if no stacks have been configured yet
-        if self.stack_store.is_empty():
-            self.initialize_store()
 
         # Sanitize the repository configuration to reflect the active
         # profile and its store contents
@@ -548,7 +543,6 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
         The store will contain a single stack with a local orchestrator,
         a local artifact store and a local SQLite metadata store.
         """
-        logger.info("Initializing store...")
 
         # register and activate a local stack
         stack = Stack.default_local_stack()

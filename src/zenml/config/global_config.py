@@ -184,7 +184,12 @@ class ConfigProfile(BaseModel):
         # Create and initialize the profile using a special repository instance.
         # This also validate and updates the store URL configuration and creates
         # all necessary resources (e.g. paths, initial DB, default stacks).
-        Repository(profile=self)
+        repo = Repository(profile=self)
+
+        if not self.active_stack:
+            stacks = repo.stacks
+            if stacks:
+                self.active_stack = stacks[0].name
 
     def cleanup(self) -> None:
         """Cleanup the profile directory."""

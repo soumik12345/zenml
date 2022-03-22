@@ -67,6 +67,8 @@ class LocalStackStore(BaseStackStore):
             self.__store = StackStoreModel.empty_store()
             self._write_store()
 
+        super().initialize(url, *args, **kwargs)
+
     # Public interface implementations:
 
     @property

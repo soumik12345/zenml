@@ -89,6 +89,8 @@ class SqlStackStore(BaseStackStore):
                 session.add(ZenUser(id=1, name="LocalZenUser"))
             session.commit()
 
+        super().initialize(url, *args, **kwargs)
+
     # Public interface implementations:
 
     @property
