@@ -61,6 +61,19 @@ def is_standard_pin(pin: str) -> bool:
     return False
 
 
+def is_inside_repository(file_path: str) -> bool:
+    """Returns whether a file is inside a zenml repository."""
+    from zenml.repository import Repository
+
+    repo_path = Repository().root
+    if not repo_path:
+        return False
+
+    repo_path = repo_path.resolve()
+    absolute_file_path = pathlib.Path(file_path).resolve()
+    return repo_path in absolute_file_path.parents
+
+
 def is_third_party_module(file_path: str) -> bool:
     """Returns whether a file belongs to a third party package."""
     absolute_file_path = pathlib.Path(file_path).resolve()
@@ -121,6 +134,57 @@ def get_module_source_from_source(source: str) -> str:
     return ".".join(class_source.split(".")[:-2])
 
 
+def get_module_source_from_module(module: ModuleType) -> str:
+    """Gets the source of the supplied module.
+
+    E.g.:
+
+      * a `/home/myrepo/src/run.py` module running as the main module returns
+      `run` if no repository root is specified.
+
+      * a `/home/myrepo/src/run.py` module running as the main module returns
+      `src.run` if the repository root is configured in `/home/myrepo`
+
+      * a `/home/myrepo/src/pipeline.py` module not running as the main module
+      returns `src.pipeline` if the repository root is configured in
+      `/home/myrepo`
+
+      * a `/home/myrepo/src/pipeline.py` module not running as the main module
+      returns `pipeline` if no repository root is specified and the main
+      module is also in `/home/myrepo/src`.
+
+    Args:
+        module: the module to get the source of.
+
+    Returns:
+        The source of the main module.
+
+    Raises:
+        RuntimeError: if the module is not loaded from a file
+    """
+    if not hasattr(module, "__file__") or not module.__file__:
+        if module.__name__ == "__main__":
+            raise RuntimeError(
+                f"{module} module was not loaded from a file. Cannot "
+                "determine the module root path."
+            )
+        return module.__name__
+    module_path = os.path.abspath(module.__file__)
+
+    root_path = get_source_root_path()
+
+    if not module_path.startswith(root_path):
+        logger.warning("User module %s is not in the repository root.", module)
+
+    # Remove root_path from module_path to get relative path left over
+    module_path = module_path.replace(root_path, "")[1:]
+
+    # Kick out the .py and replace `/` with `.` to get the module source
+    module_path = module_path.replace(".py", "")
+    module_source = module_path.replace("/", ".")
+    return module_source
+
+
 def get_relative_path_from_module_source(module_source: str) -> str:
     """Get a directory path from module, relative to root of the package tree.
 
@@ -145,20 +209,32 @@ def get_absolute_path_from_module_source(module: str) -> str:
 
 
 def get_source_root_path() -> str:
-    """Gets the source root path of the current process.
+    """Get the repository root path or the source root path of the current
+    process.
 
-    E.g. if the process was started by running a `run.py` file under
-    `full/path/to/my/run.py`, the source root path is `full/path/to`.
+    E.g.:
+
+      * if the process was started by running a `run.py` file under
+      `full/path/to/my/run.py`, and the repository root is configured at
+      `full/path`, the source root path is `full/path`.
+
+      * same case as above, but when there is no repository root configured,
+      the source root path is `full/path/to/my`.
+
+      *
 
     Args:
         module: a module.
 
     Returns:
         The source root path of the current process.
-
-    Raises:
-        RuntimeError: if the source root path could not be determined.
     """
+    from zenml.repository import Repository
+
+    repo_root = Repository().root
+    if repo_root:
+        return str(repo_root.resolve())
+
     main_module = sys.modules.get("__main__")
     if main_module is None:
         raise RuntimeError(
@@ -166,9 +242,9 @@ def get_source_root_path() -> str:
             "process."
         )
 
-    if main_module.__file__ is None:
+    if not hasattr(main_module, "__file__") or not main_module.__file__:
         raise RuntimeError(
-            "Main module was not loaded from a file. Cannot "
+            "Main module was not started from a file. Cannot "
             "determine the module root path."
         )
     path = pathlib.Path(main_module.__file__).resolve().parent
@@ -271,6 +347,10 @@ def get_hashed_source(value: Any) -> str:
 def resolve_class(class_: Type[Any]) -> str:
     """Resolves a class into a serializable source string.
 
+    For classes that are not built-in nor imported from a Python package, the
+    `get_source_root_path` function is used to determine the root path
+    relative to which the class source is resolved.
+
     Args:
         class_: A Python Class reference.
 
@@ -280,7 +360,27 @@ def resolve_class(class_: Type[Any]) -> str:
     if is_standard_source(initial_source):
         return resolve_standard_source(initial_source)
 
-    return initial_source
+    try:
+        file_path = inspect.getfile(class_)
+    except TypeError:
+        # builtin file
+        return initial_source
+
+    if initial_source.startswith("__main__") or is_third_party_module(
+        file_path
+    ):
+        return initial_source
+
+    # Regular user file -> get the full module path relative to the
+    # source root.
+    module_source = get_module_source_from_module(
+        sys.modules[class_.__module__]
+    )
+
+    # ENG-123 Sanitize for Windows OS
+    # module_source = module_source.replace("\\", ".")
+
+    return module_source + "." + class_.__name__
 
 
 def import_class_by_path(class_path: str) -> Type[Any]:

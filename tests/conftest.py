@@ -16,13 +16,15 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Generator
 
 import pytest
 from py._builtin import execfile
+from pytest_mock import MockerFixture
 
 from tests.venv_clone_utils import clone_virtualenv
 from zenml.artifacts.base_artifact import BaseArtifact
-from zenml.config.global_config import GlobalConfig
+from zenml.config.global_config import ConfigProfile, GlobalConfig
 from zenml.constants import ENV_ZENML_DEBUG
 from zenml.materializers.base_materializer import BaseMaterializer
 from zenml.pipelines import pipeline
@@ -31,7 +33,9 @@ from zenml.steps import StepContext, step
 
 
 @pytest.fixture(scope="session", autouse=True)
-def base_repo(tmp_path_factory, session_mocker):
+def base_repo(
+    tmp_path_factory: pytest.TempPathFactory, session_mocker: MockerFixture
+):
     """Fixture to get a base clean global configuration and repository for all
     tests."""
 
@@ -75,6 +79,43 @@ def base_repo(tmp_path_factory, session_mocker):
     # reset the global configuration and the repository
     GlobalConfig._reset_instance()
     Repository._reset_instance()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def base_profile(
+    base_repo: Repository,
+    request: pytest.FixtureRequest,
+) -> Generator[Repository, None, None]:
+    """Creates and activates a clean profile with a fresh default stack for all
+    tests in a module.
+
+    Args:
+        base_repo: The base ZenML repository for tests.
+        request: Pytest FixtureRequest object
+
+    Yields:
+        The input repository with a provisioned profile.
+    """
+    gc = GlobalConfig()
+
+    profile_name = request.node.name
+    profile_name = profile_name.replace(".", "_")
+    gc.add_or_update_profile(
+        ConfigProfile(
+            name=profile_name,
+        )
+    )
+
+    original_profile = base_repo.active_profile_name
+
+    base_repo.activate_profile(profile_name)
+
+    logging.info(f"Tests are running in clean profile: {profile_name}")
+
+    yield base_repo
+
+    base_repo.activate_profile(original_profile)
+    gc.delete_profile(profile_name)
 
 
 @pytest.fixture
@@ -360,7 +401,7 @@ def pytest_generate_tests(metafunc):
     with the cli options."""
     if "repo_fixture_name" in metafunc.fixturenames:
         if metafunc.config.getoption("on_kubeflow"):
-            repos = ["clean_kubeflow_repo"]
+            repos = ["clean_kubeflow_profile"]
         else:
-            repos = ["clean_repo"]
+            repos = ["clean_base_profile"]
         metafunc.parametrize("repo_fixture_name", repos)

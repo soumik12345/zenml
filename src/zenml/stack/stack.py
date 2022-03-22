@@ -29,6 +29,7 @@ from typing import (
 from zenml.config.global_config import GlobalConfig
 from zenml.enums import StackComponentType
 from zenml.exceptions import ProvisioningError
+from zenml.io import fileio
 from zenml.logger import get_logger
 from zenml.runtime_configuration import (
     RUN_NAME_OPTION_KEY,
@@ -166,6 +167,7 @@ class Stack:
             "local_stores",
             str(artifact_store_uuid),
         )
+        fileio.create_dir_recursive_if_not_exists(artifact_store_path)
         artifact_store = LocalArtifactStore(
             name="default",
             uuid=artifact_store_uuid,

@@ -191,6 +191,7 @@ if sys.platform != "win32":
 )
 def test_run_example(
     example_configuration: ExampleIntegrationTestConfiguration,
+    tmp_path_factory: pytest.TempPathFactory,
     repo_fixture_name: str,
     request: pytest.FixtureRequest,
     virtualenv: str,
@@ -199,6 +200,7 @@ def test_run_example(
 
     Args:
         example_configuration: Configuration of the example to run.
+        tmp_path_factory: Factory to generate temporary test paths.
         repo_fixture_name: Name of a fixture that returns a ZenML repository.
             This fixture will be executed and the example will run on the
             active stack of the repository given by the fixture.
@@ -210,16 +212,18 @@ def test_run_example(
     # run the fixture given by repo_fixture_name
     repo = request.getfixturevalue(repo_fixture_name)
 
+    tmp_path = tmp_path_factory.mktemp("tmp")
+
     # Root directory of all checked out examples
     examples_directory = Path(repo.original_cwd) / "examples"
 
     # Copy all example files into the repository directory
     copy_example_files(
-        str(examples_directory / example_configuration.name), Path.cwd()
+        str(examples_directory / example_configuration.name), str(tmp_path)
     )
 
     # Run the example
-    example = LocalExample(name=example_configuration.name, path=Path.cwd())
+    example = LocalExample(name=example_configuration.name, path=tmp_path)
     example.run_example(
         example_runner(examples_directory),
         force=True,
@@ -228,3 +232,6 @@ def test_run_example(
 
     # Validate the result
     example_configuration.validation_function(repo)
+
+    # clean up
+    shutil.rmtree(tmp_path)

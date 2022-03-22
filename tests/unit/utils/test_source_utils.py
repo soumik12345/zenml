@@ -58,7 +58,7 @@ def test_loading_class_by_path_prepends_repo_path(clean_repo, mocker, tmp_path):
     the python path."""
 
     Repository.initialize(tmp_path)
-    Repository().activate_root(tmp_path)
+    clean_repo.activate_root(tmp_path)
 
     python_file = clean_repo.root / "some_directory" / "python_file.py"
     python_file.parent.mkdir()

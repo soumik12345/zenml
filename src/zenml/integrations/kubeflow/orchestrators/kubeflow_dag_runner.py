@@ -73,6 +73,7 @@ from zenml.integrations.kubeflow.orchestrators.kubeflow_component import (
 from zenml.logger import get_logger
 from zenml.orchestrators import context_utils
 from zenml.orchestrators.utils import create_tfx_pipeline
+from zenml.utils.source_utils import get_module_source_from_module
 
 if TYPE_CHECKING:
     from zenml.pipelines.base_pipeline import BasePipeline
@@ -348,7 +349,7 @@ class KubeflowDagRunner:
             # remove the extra pipeline node information
             tfx_node_ir = self._dehydrate_tfx_ir(tfx_ir, component.id)
 
-            main_module = sys.modules["__main__"].__name__
+            main_module = get_module_source_from_module(sys.modules["__main__"])
 
             step_module = component.component_type.split(".")[:-1]
             if step_module[0] == "__main__":
