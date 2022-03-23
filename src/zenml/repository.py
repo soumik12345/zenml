@@ -14,13 +14,14 @@
 import base64
 import json
 import os
+import random
 from abc import ABCMeta
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type, cast
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from zenml.config.global_config import (
     BaseGlobalConfiguration,
@@ -248,7 +249,7 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
                 directory.
         """
 
-        self._root = self.find_repository(root)
+        self._root = self.find_repository(root, enable_warnings=True)
 
         global_cfg = GlobalConfig()
         new_profile = self._profile
@@ -383,13 +384,77 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
 
         self._write_config()
 
+    @staticmethod
+    def _migrate_legacy_repository(config_file: str) -> Optional[ConfigProfile]:
+        """Migrate a legacy repository configuration to the new format and
+        create a new Profile out of it.
+
+        Args:
+            config_file: Path to the legacy repository configuration file.
+
+        Returns:
+            The new Profile instance created for the legacy repository or None
+            if a legacy repository configuration was not found at the supplied
+            path.
+        """
+        if not fileio.file_exists(config_file):
+            return None
+
+        config_dict = yaml_utils.read_yaml(config_file)
+
+        try:
+            legacy_config = LegacyRepositoryConfig.parse_obj(config_dict)
+        except ValidationError:
+            # legacy configuration not detected
+            return None
+
+        config_path = str(Path(config_file).parent)
+        profile_name = f"legacy-repository-{random.getrandbits(32):08x}"
+
+        # a legacy repository configuration was detected
+        logger.warning(
+            "A legacy ZenML repository with locally configured stacks was "
+            "found at `%s`.\n"
+            "The stacks configured in this repository will be automatically "
+            "migrated to a newly created profile: `%s`.\n\n"
+            "If you no longer need to use the stacks configured in this "
+            "repository, please delete the profile using the following "
+            "command:\n\n"
+            "`zenml profile delete %s`\n\n"
+            "This warning will not be shown again.",
+            config_path,
+            profile_name,
+            profile_name,
+        )
+
+        stack_data = legacy_config.get_stack_data()
+        store = LocalStackStore()
+        store.initialize(url=config_path, stack_data=stack_data)
+        store._write_store()
+        profile = ConfigProfile(
+            name=profile_name,
+            store_url=config_path,
+            active_stack=legacy_config.active_stack_name,
+        )
+
+        new_config = RepositoryConfiguration(
+            active_profile_name=profile.name,
+            active_stack_name=legacy_config.active_stack_name,
+        )
+        new_config_dict = json.loads(new_config.json())
+        yaml_utils.write_yaml(config_file, new_config_dict)
+        GlobalConfig().add_or_update_profile(profile)
+
+        return profile
+
     def _load_config(self) -> Optional[RepositoryConfiguration]:
         """Loads the repository configuration from disk, if the repository has
         an active root and the configuration file exists. If the configuration
         file doesn't exist, an empty configuration is returned.
 
         If a legacy repository configuration is found in the repository root,
-        it is migrated to the new configuration format.
+        it is migrated to the new configuration format and a new profile is
+        automatically created out of it and activated for the repository root.
 
         If the repository doesn't have an active root, no repository
         configuration is used and the active profile configuration takes
@@ -410,41 +475,13 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
             logger.debug(
                 f"Loading repository configuration from {config_path}."
             )
+
+            # detect an old style repository configuration and migrate it to
+            # the new format and create a profile out of it if necessary
+            self._migrate_legacy_repository(config_path)
+
             config_dict = yaml_utils.read_yaml(config_path)
             config = RepositoryConfiguration.parse_obj(config_dict)
-
-            if "stacks" not in config_dict:
-                return config
-
-            # a legacy repository configuration was detected
-            logger.debug(
-                "Found old style repository, converting to "
-                "minimal repository config with separate stack store file."
-            )
-
-            # if we have an old style repository in place already, split
-            # repository config and stack store out into separate entities
-            legacy_config = LegacyRepositoryConfig.parse_obj(config_dict)
-            stack_data = legacy_config.get_stack_data()
-            store = LocalStackStore()
-            store.initialize(
-                url=str(self.config_directory), stack_data=stack_data
-            )
-            store._write_store()
-            self._write_config()
-            logger.warning(
-                "A legacy ZenML repository with locally configured stacks was "
-                "found at %s. \n"
-                "The stacks configured in this repository will be ignored in "
-                "favor of those from the current configuration profile. If you "
-                "still need to use the stacks configured in this repository, "
-                "please migrate them to a profile using the following "
-                "command:\n\n"
-                "`zenml profile create -t local --url %s PROFILE-NAME`\n\n"
-                "This warning will not be shown again.",
-                config_path,
-                self.config_directory,
-            )
 
             return config
 
@@ -895,7 +932,9 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
         return fileio.is_dir(str(config_dir))
 
     @staticmethod
-    def find_repository(path: Optional[Path] = None) -> Optional[Path]:
+    def find_repository(
+        path: Optional[Path] = None, enable_warnings: bool = False
+    ) -> Optional[Path]:
         """Search for a ZenML repository directory.
 
         Args:
@@ -904,6 +943,8 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
                 environment variable `ZENML_REPOSITORY_PATH` (if set) and
                 recursively searching in the parent directories of the current
                 working directory.
+            enable_warnings: If `True`, warnings are printed if the repository
+                root cannot be found.
 
         Returns:
             Absolute path to a ZenML repository directory or None if no
@@ -954,8 +995,8 @@ class Repository(BaseGlobalConfiguration, metaclass=RepositoryMetaClass):
 
         if repo_path:
             return repo_path.resolve()
-
-        logger.warning(warning_message)
+        if enable_warnings:
+            logger.warning(warning_message)
         return None
 
     def _component_from_wrapper(
